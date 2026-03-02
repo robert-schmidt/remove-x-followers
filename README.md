@@ -36,7 +36,7 @@ I'm a developer. I used to build things with the Twitter API. Now X charges exor
 
 ### So I built this
 
-Since X won't let me disable followers, and won't give me meaningful control over my own account, I built this tool to do it for me. It watches my account and silently removes every new follower using X's internal GraphQL API — the same one x.com uses when you click "Remove this follower" in the browser. The public API's block endpoint is broken on the pay-per-use tier (because of course it is), so we bypass it entirely.
+Since X won't let me disable followers, and won't give me meaningful control over my own account, I built this tool to do it for me. It watches my account and silently removes every new follower using X's internal GraphQL API — the same one x.com uses when you click "Remove this follower" in the browser. No developer account needed. No paid API tier. Just your browser cookies.
 
 I'm going ghost. Zero followers. Zero engagement. Just a profile that exists to remind me why I left.
 
@@ -49,7 +49,6 @@ If you want to do the same, the code is below.
 ### Requirements
 
 - Python 3.9+
-- X Developer account with an app that has **Read and Write** permissions
 - Your browser session cookies from x.com
 
 ### Install
@@ -67,17 +66,7 @@ venv/bin/pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Your `.env` file needs 6 values from two sources:
-
-**OAuth 1.0a keys** (from the [X Developer Console](https://developer.x.com) → Apps → your app → Keys and tokens):
-```
-API_KEY=your_consumer_key
-API_KEY_SECRET=your_consumer_key_secret
-ACCESS_TOKEN=your_access_token
-ACCESS_TOKEN_SECRET=your_access_token_secret
-```
-
-**Session cookies** (from your browser — used for the GraphQL remove-follower endpoint since the public API block endpoint is broken):
+Your `.env` file needs 2 values from your browser cookies:
 
 1. Open [x.com](https://x.com) and make sure you're logged in
 2. Open DevTools (F12) → Application tab → Cookies → `https://x.com`
@@ -87,8 +76,6 @@ ACCESS_TOKEN_SECRET=your_access_token_secret
 X_AUTH_TOKEN=your_auth_token_cookie
 X_CT0=your_ct0_cookie
 ```
-
-The OAuth keys are used to fetch the followers list. The session cookies are used to remove followers via X's internal GraphQL API.
 
 **Note:** Session cookies expire when you log out or when X rotates them. If the daemon starts failing with auth errors, grab fresh cookies from your browser and update the `.env`.
 
@@ -108,7 +95,7 @@ scp -r . user@your-vps:/opt/x-follower-remover/
 cd /opt/x-follower-remover
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
-cp .env.example .env  # fill in all 6 values
+cp .env.example .env  # fill in both values
 
 sudo cp x-follower-remover.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -120,9 +107,9 @@ sudo journalctl -u x-follower-remover -f
 
 ### How it works
 
-The daemon polls your followers list every 5 seconds. When it finds new followers, it removes them using the `RemoveFollower` GraphQL mutation — the same internal endpoint that x.com uses when you click "Remove this follower" in the browser. Followers are silently removed without being blocked. They can still see your profile, but if they follow again, they'll be removed again within seconds.
+The daemon uses X's internal GraphQL API exclusively — the same endpoints that x.com uses in the browser. It fetches your followers list via the `Followers` query and removes them via the `RemoveFollower` mutation, polling every 5 seconds. No public API access or developer account required.
 
-The followers list fetch (via the public API) has a rate limit of 15 requests per 15 minutes. The tool auto-sleeps when it hits this limit and resumes automatically. The GraphQL removal itself has no known rate limit.
+Followers are silently removed without being blocked. They can still see your profile, but if they follow again, they'll be removed again within seconds.
 
 All removals are logged to `removals.log` with timestamps.
 

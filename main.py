@@ -1,10 +1,10 @@
+import json
 import os
 import sys
 import time
 import logging
 
 import requests
-import tweepy
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,21 +30,41 @@ POLL_INTERVAL = 5  # seconds between polls
 # X web app's public bearer token (same for all users, embedded in x.com's JS)
 X_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
+REMOVE_FOLLOWER_QID = "QpNfg0kpPRfjROQ_9eOLXA"
+REMOVE_FOLLOWER_URL = f"https://x.com/i/api/graphql/{REMOVE_FOLLOWER_QID}/RemoveFollower"
 
-def get_tweepy_client():
-    keys = ("API_KEY", "API_KEY_SECRET", "ACCESS_TOKEN", "ACCESS_TOKEN_SECRET")
-    missing = [k for k in keys if not os.environ.get(k)]
-    if missing:
-        log.error("Missing env vars: %s", ", ".join(missing))
-        sys.exit(1)
+FOLLOWERS_QID = "Elc_-qTARceHpztqhI9PQA"
+FOLLOWERS_URL = f"https://x.com/i/api/graphql/{FOLLOWERS_QID}/Followers"
 
-    return tweepy.Client(
-        consumer_key=os.environ["API_KEY"],
-        consumer_secret=os.environ["API_KEY_SECRET"],
-        access_token=os.environ["ACCESS_TOKEN"],
-        access_token_secret=os.environ["ACCESS_TOKEN_SECRET"],
-        wait_on_rate_limit=True,
-    )
+FOLLOWERS_FEATURES = {
+    "rweb_tipjar_consumption_enabled": True,
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "verified_phone_label_enabled": False,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "articles_preview_enabled": False,
+    "responsive_web_edit_tweet_api_enabled": True,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "view_counts_everywhere_api_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "tweet_awards_web_tipping_enabled": False,
+    "creator_subscriptions_quote_tweet_preview_enabled": False,
+    "freedom_of_speech_not_reach_fetch_enabled": True,
+    "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "rweb_video_timestamps_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "longform_notetweets_inline_media_enabled": True,
+    "responsive_web_enhance_cards_enabled": False,
+    "responsive_web_media_download_video_enabled": False,
+    "responsive_web_twitter_article_notes_tab_enabled": False,
+    "tweetypie_unmention_optimization_enabled": True,
+    "tweet_with_visibility_results_prefer_gql_media_interstitial_enabled": False,
+}
 
 
 def get_x_session():
@@ -72,19 +92,72 @@ def get_x_session():
     return session
 
 
-def get_all_followers(client, user_id):
-    """Fetch all followers, handling pagination."""
+def get_my_user_id(session):
+    """Get the authenticated user's ID and screen name via the v1.1 settings endpoint."""
+    resp = session.get("https://api.x.com/1.1/account/settings.json")
+    resp.raise_for_status()
+    settings = resp.json()
+    screen_name = settings["screen_name"]
+
+    # Get user ID via the users/lookup endpoint
+    resp = session.get(
+        "https://api.x.com/1.1/users/lookup.json",
+        params={"screen_name": screen_name},
+    )
+    resp.raise_for_status()
+    users = resp.json()
+    return users[0]["id"], screen_name
+
+
+def get_all_followers_graphql(session, user_id):
+    """Fetch all followers via X's internal GraphQL Followers endpoint."""
     followers = []
-    for resp in tweepy.Paginator(
-        client.get_users_followers, user_id, max_results=1000, user_auth=True
-    ):
-        if resp.data:
-            followers.extend(resp.data)
+    cursor = None
+
+    while True:
+        variables = {
+            "userId": str(user_id),
+            "count": 20,
+            "includePromotedContent": False,
+        }
+        if cursor:
+            variables["cursor"] = cursor
+
+        params = {
+            "variables": json.dumps(variables),
+            "features": json.dumps(FOLLOWERS_FEATURES),
+        }
+        resp = session.get(FOLLOWERS_URL, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+        instructions = data["data"]["user"]["result"]["timeline"]["timeline"]["instructions"]
+        entries = []
+        for instr in instructions:
+            if "entries" in instr:
+                entries = instr["entries"]
+                break
+
+        next_cursor = None
+        for entry in entries:
+            eid = entry.get("entryId", "")
+            if eid.startswith("user-"):
+                try:
+                    user = entry["content"]["itemContent"]["user_results"]["result"]
+                    followers.append({
+                        "id": int(user["rest_id"]),
+                        "username": user["legacy"]["screen_name"],
+                    })
+                except (KeyError, TypeError):
+                    continue
+            elif eid.startswith("cursor-bottom-"):
+                next_cursor = entry["content"]["value"]
+
+        if not next_cursor:
+            break
+        cursor = next_cursor
+
     return followers
-
-
-REMOVE_FOLLOWER_URL = "https://x.com/i/api/graphql/QpNfg0kpPRfjROQ_9eOLXA/RemoveFollower"
-REMOVE_FOLLOWER_QID = "QpNfg0kpPRfjROQ_9eOLXA"
 
 
 def remove_follower(session, target_id, username):
@@ -105,21 +178,15 @@ def remove_follower(session, target_id, username):
 
 
 def main():
-    client = get_tweepy_client()
     session = get_x_session()
 
-    me = client.get_me(user_auth=True)
-    if not me.data:
-        log.error("Failed to authenticate — check your credentials.")
-        sys.exit(1)
-
-    my_id = me.data.id
-    log.info("Authenticated as @%s (ID: %s)", me.data.username, my_id)
+    my_id, screen_name = get_my_user_id(session)
+    log.info("Authenticated as @%s (ID: %s)", screen_name, my_id)
     log.info("Polling every %ds. Ctrl+C to stop.", POLL_INTERVAL)
 
     while True:
         try:
-            followers = get_all_followers(client, my_id)
+            followers = get_all_followers_graphql(session, my_id)
 
             if not followers:
                 log.info("No followers — nothing to do.")
@@ -128,21 +195,22 @@ def main():
                 removed = 0
                 for f in followers:
                     try:
-                        remove_follower(session, f.id, f.username)
+                        remove_follower(session, f["id"], f["username"])
                         removed += 1
                     except requests.HTTPError as e:
                         if e.response is not None and e.response.status_code == 429:
                             log.warning("Rate limited. Will retry next cycle.")
                             break
-                        log.error("HTTP error removing @%s: %s", f.username, e)
+                        log.error("HTTP error removing @%s: %s", f["username"], e)
                     except Exception as e:
-                        log.error("Failed to remove @%s: %s", f.username, e)
+                        log.error("Failed to remove @%s: %s", f["username"], e)
                 log.info("Removed %d/%d follower(s) this cycle.", removed, len(followers))
 
-        except tweepy.TooManyRequests:
-            log.warning("Rate limited on followers fetch. Waiting for next cycle.")
-        except tweepy.TwitterServerError as e:
-            log.warning("Server error: %s. Retrying next cycle.", e)
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 429:
+                log.warning("Rate limited on followers fetch. Waiting for next cycle.")
+            else:
+                log.error("HTTP error: %s", e)
         except Exception as e:
             log.error("Unexpected error: %s", e, exc_info=True)
 

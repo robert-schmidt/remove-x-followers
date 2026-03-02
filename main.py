@@ -33,8 +33,18 @@ X_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7tt
 REMOVE_FOLLOWER_QID = "QpNfg0kpPRfjROQ_9eOLXA"
 REMOVE_FOLLOWER_URL = f"https://x.com/i/api/graphql/{REMOVE_FOLLOWER_QID}/RemoveFollower"
 
-FOLLOWERS_QID = "Elc_-qTARceHpztqhI9PQA"
+FOLLOWERS_QID = "W16HbbxU_8PjA_nE2JCr9g"
 FOLLOWERS_URL = f"https://x.com/i/api/graphql/{FOLLOWERS_QID}/Followers"
+
+VIEWER_QID = "zWQLM9HIVahRSUvzUH4lDw"
+VIEWER_URL = f"https://x.com/i/api/graphql/{VIEWER_QID}/Viewer"
+
+VIEWER_FEATURES = {
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "verified_phone_label_enabled": False,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+}
 
 FOLLOWERS_FEATURES = {
     "rweb_tipjar_consumption_enabled": True,
@@ -93,13 +103,16 @@ def get_x_session():
 
 
 def get_my_user_id(session):
-    """Get the authenticated user's ID and screen name via the v1.1 verify_credentials endpoint."""
-    resp = session.get(
-        "https://x.com/i/api/1.1/account/verify_credentials.json",
-    )
+    """Get the authenticated user's ID and screen name via the GraphQL Viewer endpoint."""
+    params = {
+        "variables": json.dumps({}),
+        "features": json.dumps(VIEWER_FEATURES),
+    }
+    resp = session.get(VIEWER_URL, params=params)
     resp.raise_for_status()
     data = resp.json()
-    return data["id"], data["screen_name"]
+    user = data["data"]["viewer"]["user_results"]["result"]
+    return int(user["rest_id"]), user["core"]["screen_name"]
 
 
 def get_all_followers_graphql(session, user_id):

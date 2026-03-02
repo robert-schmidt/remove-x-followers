@@ -61,7 +61,7 @@ def get_x_session():
         "x-csrf-token": ct0,
         "x-twitter-auth-type": "OAuth2Session",
         "x-twitter-active-user": "yes",
-        "content-type": "application/x-www-form-urlencoded",
+        "content-type": "application/json",
         "referer": "https://x.com/",
         "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     })
@@ -83,14 +83,22 @@ def get_all_followers(client, user_id):
     return followers
 
 
-def block_user(session, target_id, username):
-    """Block a user via X's internal API to remove them as a follower."""
+REMOVE_FOLLOWER_URL = "https://x.com/i/api/graphql/QpNfg0kpPRfjROQ_9eOLXA/RemoveFollower"
+REMOVE_FOLLOWER_QID = "QpNfg0kpPRfjROQ_9eOLXA"
+
+
+def remove_follower(session, target_id, username):
+    """Remove a follower via X's internal GraphQL API."""
     resp = session.post(
-        "https://x.com/i/api/1.1/blocks/create.json",
-        data={"user_id": str(target_id)},
+        REMOVE_FOLLOWER_URL,
+        json={
+            "queryId": REMOVE_FOLLOWER_QID,
+            "variables": {"target_user_id": str(target_id)},
+            "features": {},
+        },
     )
     resp.raise_for_status()
-    log.info("Blocked @%s (%s)", username, target_id)
+    log.info("Removed @%s (%s)", username, target_id)
     removal_logger.info(
         "%s\t@%s\t%s", time.strftime("%Y-%m-%d %H:%M:%S"), username, target_id
     )
@@ -116,20 +124,20 @@ def main():
             if not followers:
                 log.info("No followers — nothing to do.")
             else:
-                log.info("Found %d follower(s). Blocking...", len(followers))
+                log.info("Found %d follower(s). Removing...", len(followers))
                 removed = 0
                 for f in followers:
                     try:
-                        block_user(session, f.id, f.username)
+                        remove_follower(session, f.id, f.username)
                         removed += 1
                     except requests.HTTPError as e:
                         if e.response is not None and e.response.status_code == 429:
                             log.warning("Rate limited. Will retry next cycle.")
                             break
-                        log.error("HTTP error blocking @%s: %s", f.username, e)
+                        log.error("HTTP error removing @%s: %s", f.username, e)
                     except Exception as e:
-                        log.error("Failed to block @%s: %s", f.username, e)
-                log.info("Blocked %d/%d follower(s) this cycle.", removed, len(followers))
+                        log.error("Failed to remove @%s: %s", f.username, e)
+                log.info("Removed %d/%d follower(s) this cycle.", removed, len(followers))
 
         except tweepy.TooManyRequests:
             log.warning("Rate limited on followers fetch. Waiting for next cycle.")

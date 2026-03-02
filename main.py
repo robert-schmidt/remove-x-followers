@@ -26,6 +26,7 @@ removal_handler.setFormatter(logging.Formatter("%(message)s"))
 removal_logger.addHandler(removal_handler)
 
 POLL_INTERVAL = 5  # seconds between polls
+AUTH_ERROR_CODES = {401, 403}
 
 # X web app's public bearer token (same for all users, embedded in x.com's JS)
 X_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
@@ -42,6 +43,33 @@ VIEWER_FEATURES = {
     "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
     "responsive_web_graphql_timeline_navigation_enabled": True,
 }
+
+
+def send_alert(subject, body):
+    """Send an email alert via Postmark. Fails silently."""
+    api_key = os.environ.get("POSTMARK_API_KEY")
+    alert_email = os.environ.get("ALERT_EMAIL")
+    if not api_key or not alert_email:
+        return
+    try:
+        requests.post(
+            "https://api.postmarkapp.com/email",
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-Postmark-Server-Token": api_key,
+            },
+            json={
+                "From": alert_email,
+                "To": alert_email,
+                "Subject": subject,
+                "TextBody": body,
+            },
+            timeout=10,
+        )
+        log.info("Alert email sent to %s", alert_email)
+    except Exception as e:
+        log.warning("Failed to send alert email: %s", e)
 
 
 def get_x_session():
@@ -132,9 +160,25 @@ def remove_follower(session, target_id, username):
 def main():
     session = get_x_session()
 
-    my_id, screen_name = get_my_user_id(session)
+    try:
+        my_id, screen_name = get_my_user_id(session)
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else None
+        if status in AUTH_ERROR_CODES:
+            log.error("Session cookie expired or invalid (HTTP %s).", status)
+            send_alert(
+                "X Follower Remover: session cookie expired",
+                "The daemon failed to authenticate. Your X session cookies "
+                "have expired or been revoked.\n\n"
+                "Grab fresh cookies from your browser and update the .env file, "
+                "then restart the service:\n\n"
+                "  sudo systemctl restart x-follower-remover",
+            )
+        raise
+
     log.info("Authenticated as @%s (ID: %s)", screen_name, my_id)
     log.info("Polling every %ds. Ctrl+C to stop.", POLL_INTERVAL)
+    alerted = False
 
     while True:
         try:
@@ -160,7 +204,19 @@ def main():
 
         except requests.HTTPError as e:
             status = e.response.status_code if e.response is not None else None
-            if status == 429:
+            if status in AUTH_ERROR_CODES:
+                log.error("Session cookie expired (HTTP %s).", status)
+                if not alerted:
+                    send_alert(
+                        "X Follower Remover: session cookie expired",
+                        "The daemon can no longer authenticate to X. Your session "
+                        "cookies have expired or been revoked.\n\n"
+                        "Grab fresh cookies from your browser and update the .env "
+                        "file, then restart the service:\n\n"
+                        "  sudo systemctl restart x-follower-remover",
+                    )
+                    alerted = True
+            elif status == 429:
                 log.warning("Rate limited on followers fetch. Waiting for next cycle.")
             else:
                 log.error("HTTP error: %s", e)

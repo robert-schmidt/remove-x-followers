@@ -77,7 +77,16 @@ X_AUTH_TOKEN=your_auth_token_cookie
 X_CT0=your_ct0_cookie
 ```
 
-**Note:** Session cookies expire when you log out or when X rotates them. If the daemon starts failing with auth errors, grab fresh cookies from your browser and update the `.env`.
+**Email alerts (optional):** Get notified when your session cookies expire. Add a [Postmark](https://postmarkapp.com) API key and the email address to send alerts to:
+
+```
+POSTMARK_API_KEY=your_postmark_server_api_token
+ALERT_EMAIL=you@example.com
+```
+
+The daemon will send a one-time email when it detects an auth failure (HTTP 401/403), then continue retrying silently. If these vars are not set, alerts are simply skipped.
+
+**Note:** Session cookies expire when you log out or when X rotates them. If the daemon starts failing with auth errors (or you get an alert email), grab fresh cookies from your browser and update the `.env`.
 
 ### Run
 
@@ -107,7 +116,7 @@ sudo journalctl -u x-follower-remover -f
 
 ### How it works
 
-The daemon uses X's internal GraphQL API exclusively — the same endpoints that x.com uses in the browser. It fetches your followers list via the `Followers` query and removes them via the `RemoveFollower` mutation, polling every 5 seconds. No public API access or developer account required.
+The daemon fetches your followers list via X's REST API and removes them via the internal `RemoveFollower` GraphQL mutation, polling every 5 seconds. No public API access or developer account required.
 
 Followers are silently removed without being blocked. They can still see your profile, but if they follow again, they'll be removed again within seconds.
 

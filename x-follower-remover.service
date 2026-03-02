@@ -1,0 +1,21 @@
+[Unit]
+Description=X Follower Auto-Remover
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/x-follower-remover
+EnvironmentFile=/opt/x-follower-remover/.env
+ExecStart=/opt/x-follower-remover/venv/bin/python main.py
+Restart=always
+RestartSec=10
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/x-follower-remover
+
+[Install]
+WantedBy=multi-user.target

@@ -8,12 +8,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+LOG_DIR = os.path.dirname(os.path.abspath(__file__))
+REMOVALS_LOG = os.path.join(LOG_DIR, "removals.log")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     stream=sys.stdout,
 )
 log = logging.getLogger("follower-remover")
+
+removal_logger = logging.getLogger("removals")
+removal_logger.setLevel(logging.INFO)
+removal_handler = logging.FileHandler(REMOVALS_LOG)
+removal_handler.setFormatter(logging.Formatter("%(message)s"))
+removal_logger.addHandler(removal_handler)
 
 POLL_INTERVAL = 60  # seconds between polls (rate limit: 15 req/15 min)
 
@@ -50,6 +59,7 @@ def remove_follower(client, target_id, username):
     client.block(target_user_id=target_id, user_auth=True)
     client.unblock(target_user_id=target_id, user_auth=True)
     log.info("Removed @%s (%s)", username, target_id)
+    removal_logger.info("%s\t@%s\t%s", time.strftime("%Y-%m-%d %H:%M:%S"), username, target_id)
 
 
 def main():

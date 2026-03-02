@@ -213,8 +213,11 @@ def main():
                 log.info("Removed %d/%d follower(s) this cycle.", removed, len(followers))
 
         except requests.HTTPError as e:
-            if e.response is not None and e.response.status_code == 429:
+            status = e.response.status_code if e.response is not None else None
+            if status == 429:
                 log.warning("Rate limited on followers fetch. Waiting for next cycle.")
+            elif status == 404 and e.response is not None and not e.response.text.strip():
+                log.warning("Empty 404 — likely rate limited. Waiting for next cycle.")
             else:
                 log.error("HTTP error: %s", e)
         except Exception as e:

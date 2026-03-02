@@ -3,6 +3,7 @@ import sys
 import time
 import logging
 
+import requests
 import tweepy
 from dotenv import load_dotenv
 
@@ -26,8 +27,11 @@ removal_logger.addHandler(removal_handler)
 
 POLL_INTERVAL = 60  # seconds between polls (rate limit: 15 req/15 min)
 
+# X web app's public bearer token (same for all users, embedded in x.com's JS)
+X_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
-def get_client():
+
+def get_tweepy_client():
     keys = ("API_KEY", "API_KEY_SECRET", "ACCESS_TOKEN", "ACCESS_TOKEN_SECRET")
     missing = [k for k in keys if not os.environ.get(k)]
     if missing:
@@ -43,6 +47,31 @@ def get_client():
     )
 
 
+def get_x_session():
+    keys = ("X_AUTH_TOKEN", "X_CT0")
+    missing = [k for k in keys if not os.environ.get(k)]
+    if missing:
+        log.error("Missing env vars: %s", ", ".join(missing))
+        sys.exit(1)
+
+    ct0 = os.environ["X_CT0"]
+    session = requests.Session()
+    session.headers.update({
+        "authorization": f"Bearer {X_BEARER}",
+        "x-csrf-token": ct0,
+        "x-twitter-auth-type": "OAuth2Session",
+        "x-twitter-active-user": "yes",
+        "content-type": "application/x-www-form-urlencoded",
+        "referer": "https://x.com/",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    })
+    session.cookies.update({
+        "auth_token": os.environ["X_AUTH_TOKEN"],
+        "ct0": ct0,
+    })
+    return session
+
+
 def get_all_followers(client, user_id):
     """Fetch all followers, handling pagination."""
     followers = []
@@ -54,16 +83,22 @@ def get_all_followers(client, user_id):
     return followers
 
 
-def remove_follower(client, target_id, username):
-    """Block then immediately unblock to remove a follower."""
-    client.block(target_user_id=target_id, user_auth=True)
-    client.unblock(target_user_id=target_id, user_auth=True)
-    log.info("Removed @%s (%s)", username, target_id)
-    removal_logger.info("%s\t@%s\t%s", time.strftime("%Y-%m-%d %H:%M:%S"), username, target_id)
+def block_user(session, target_id, username):
+    """Block a user via X's internal API to remove them as a follower."""
+    resp = session.post(
+        "https://x.com/i/api/1.1/blocks/create.json",
+        data={"user_id": str(target_id)},
+    )
+    resp.raise_for_status()
+    log.info("Blocked @%s (%s)", username, target_id)
+    removal_logger.info(
+        "%s\t@%s\t%s", time.strftime("%Y-%m-%d %H:%M:%S"), username, target_id
+    )
 
 
 def main():
-    client = get_client()
+    client = get_tweepy_client()
+    session = get_x_session()
 
     me = client.get_me(user_auth=True)
     if not me.data:
@@ -81,21 +116,20 @@ def main():
             if not followers:
                 log.info("No followers — nothing to do.")
             else:
-                log.info("Found %d follower(s). Removing...", len(followers))
+                log.info("Found %d follower(s). Blocking...", len(followers))
                 removed = 0
                 for f in followers:
                     try:
-                        remove_follower(client, f.id, f.username)
+                        block_user(session, f.id, f.username)
                         removed += 1
-                    except tweepy.TooManyRequests:
-                        # wait_on_rate_limit should handle this, but just in case
-                        log.warning("Rate limited during removal. Will retry next cycle.")
-                        break
-                    except tweepy.TwitterServerError as e:
-                        log.warning("Server error removing @%s: %s", f.username, e)
+                    except requests.HTTPError as e:
+                        if e.response is not None and e.response.status_code == 429:
+                            log.warning("Rate limited. Will retry next cycle.")
+                            break
+                        log.error("HTTP error blocking @%s: %s", f.username, e)
                     except Exception as e:
-                        log.error("Failed to remove @%s: %s", f.username, e)
-                log.info("Removed %d/%d follower(s) this cycle.", removed, len(followers))
+                        log.error("Failed to block @%s: %s", f.username, e)
+                log.info("Blocked %d/%d follower(s) this cycle.", removed, len(followers))
 
         except tweepy.TooManyRequests:
             log.warning("Rate limited on followers fetch. Waiting for next cycle.")

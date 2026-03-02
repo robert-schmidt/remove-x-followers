@@ -25,7 +25,7 @@ removal_handler = logging.FileHandler(REMOVALS_LOG)
 removal_handler.setFormatter(logging.Formatter("%(message)s"))
 removal_logger.addHandler(removal_handler)
 
-POLL_INTERVAL = 60  # seconds between polls (rate limit: 15 req/15 min)
+POLL_INTERVAL = 5  # seconds between polls
 
 # X web app's public bearer token (same for all users, embedded in x.com's JS)
 X_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"

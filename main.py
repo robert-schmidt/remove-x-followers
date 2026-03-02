@@ -93,20 +93,13 @@ def get_x_session():
 
 
 def get_my_user_id(session):
-    """Get the authenticated user's ID and screen name via the v1.1 settings endpoint."""
-    resp = session.get("https://api.x.com/1.1/account/settings.json")
-    resp.raise_for_status()
-    settings = resp.json()
-    screen_name = settings["screen_name"]
-
-    # Get user ID via the users/lookup endpoint
+    """Get the authenticated user's ID and screen name via the v1.1 verify_credentials endpoint."""
     resp = session.get(
-        "https://api.x.com/1.1/users/lookup.json",
-        params={"screen_name": screen_name},
+        "https://x.com/i/api/1.1/account/verify_credentials.json",
     )
     resp.raise_for_status()
-    users = resp.json()
-    return users[0]["id"], screen_name
+    data = resp.json()
+    return data["id"], data["screen_name"]
 
 
 def get_all_followers_graphql(session, user_id):

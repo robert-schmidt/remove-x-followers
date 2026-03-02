@@ -1,6 +1,6 @@
 # remove-x-followers
 
-A daemon that automatically removes all followers from your X (formerly Twitter) account. Runs continuously, polling every 60 seconds and soft-blocking every new follower it finds.
+A daemon that automatically removes all followers from your X (formerly Twitter) account. Runs continuously, polling every 5 seconds and silently removing every new follower it finds.
 
 **Why does this exist?** Read below.
 
@@ -36,7 +36,7 @@ I'm a developer. I used to build things with the Twitter API. Now X charges exor
 
 ### So I built this
 
-Since X won't let me disable followers, and won't give me meaningful control over my own account, I built this tool to do it for me. It watches my account and automatically removes every new follower by blocking and immediately unblocking them (the only method X's API supports — there's no "remove follower" endpoint, because of course there isn't).
+Since X won't let me disable followers, and won't give me meaningful control over my own account, I built this tool to do it for me. It watches my account and silently removes every new follower using X's internal GraphQL API — the same one x.com uses when you click "Remove this follower" in the browser. The public API's block endpoint is broken on the pay-per-use tier (because of course it is), so we bypass it entirely.
 
 I'm going ghost. Zero followers. Zero engagement. Just a profile that exists to remind me why I left.
 
@@ -50,7 +50,7 @@ If you want to do the same, the code is below.
 
 - Python 3.9+
 - X Developer account with an app that has **Read and Write** permissions
-- OAuth 1.0a credentials (Consumer Key, Consumer Secret, Access Token, Access Token Secret)
+- Your browser session cookies from x.com
 
 ### Install
 
@@ -65,10 +65,11 @@ venv/bin/pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env with your credentials
 ```
 
-Your `.env` file:
+Your `.env` file needs 6 values from two sources:
+
+**OAuth 1.0a keys** (from the [X Developer Console](https://developer.x.com) → Apps → your app → Keys and tokens):
 ```
 API_KEY=your_consumer_key
 API_KEY_SECRET=your_consumer_key_secret
@@ -76,7 +77,20 @@ ACCESS_TOKEN=your_access_token
 ACCESS_TOKEN_SECRET=your_access_token_secret
 ```
 
-Get these from the [X Developer Console](https://developer.x.com) → Apps → your app → Keys and tokens.
+**Session cookies** (from your browser — used for the GraphQL remove-follower endpoint since the public API block endpoint is broken):
+
+1. Open [x.com](https://x.com) and make sure you're logged in
+2. Open DevTools (F12) → Application tab → Cookies → `https://x.com`
+3. Copy these two cookie values:
+
+```
+X_AUTH_TOKEN=your_auth_token_cookie
+X_CT0=your_ct0_cookie
+```
+
+The OAuth keys are used to fetch the followers list. The session cookies are used to remove followers via X's internal GraphQL API.
+
+**Note:** Session cookies expire when you log out or when X rotates them. If the daemon starts failing with auth errors, grab fresh cookies from your browser and update the `.env`.
 
 ### Run
 
@@ -88,13 +102,13 @@ venv/bin/python main.py
 
 ```bash
 # Copy files to your server
-scp -r . deploy@your-vps:/opt/x-follower-remover/
+scp -r . user@your-vps:/opt/x-follower-remover/
 
 # On the server:
 cd /opt/x-follower-remover
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
-cp .env.example .env  # fill in credentials
+cp .env.example .env  # fill in all 6 values
 
 sudo cp x-follower-remover.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -104,15 +118,13 @@ sudo systemctl enable --now x-follower-remover
 sudo journalctl -u x-follower-remover -f
 ```
 
-### Rate limits
+### How it works
 
-| Action | Limit |
-|---|---|
-| Fetch followers | 15 requests / 15 min |
-| Block | 50 requests / 15 min |
-| Unblock | 50 requests / 15 min |
+The daemon polls your followers list every 5 seconds. When it finds new followers, it removes them using the `RemoveFollower` GraphQL mutation — the same internal endpoint that x.com uses when you click "Remove this follower" in the browser. Followers are silently removed without being blocked. They can still see your profile, but if they follow again, they'll be removed again within seconds.
 
-The tool auto-sleeps when hitting rate limits. Realistically it removes ~50 followers per 15 minutes.
+The followers list fetch (via the public API) has a rate limit of 15 requests per 15 minutes. The tool auto-sleeps when it hits this limit and resumes automatically. The GraphQL removal itself has no known rate limit.
+
+All removals are logged to `removals.log` with timestamps.
 
 ## License
 

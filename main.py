@@ -26,6 +26,7 @@ removal_handler.setFormatter(logging.Formatter("%(message)s"))
 removal_logger.addHandler(removal_handler)
 
 POLL_INTERVAL = 5  # seconds between polls
+REQUEST_TIMEOUT = 15  # seconds per HTTP request
 AUTH_ERROR_CODES = {401, 403}
 
 # X web app's public bearer token (same for all users, embedded in x.com's JS)
@@ -103,7 +104,7 @@ def get_my_user_id(session):
         "variables": json.dumps({}),
         "features": json.dumps(VIEWER_FEATURES),
     }
-    resp = session.get(VIEWER_URL, params=params)
+    resp = session.get(VIEWER_URL, params=params, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
     user = data["data"]["viewer"]["user_results"]["result"]
@@ -125,6 +126,7 @@ def get_all_followers(session, user_id):
                 "skip_status": "true",
                 "include_user_entities": "false",
             },
+            timeout=REQUEST_TIMEOUT,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -149,6 +151,7 @@ def remove_follower(session, target_id, username):
             "variables": {"target_user_id": str(target_id)},
             "features": {},
         },
+        timeout=REQUEST_TIMEOUT,
     )
     resp.raise_for_status()
     log.info("Removed @%s (%s)", username, target_id)
